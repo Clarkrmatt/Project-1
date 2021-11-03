@@ -1,0 +1,379 @@
+---
+title: 'Project 1: Wrangling, Exploration, Visualization'
+author: "SDS322E"
+date: ''
+output:
+  html_document:
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+  pdf_document:
+    toc: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F,
+tidy=TRUE, tidy.opts=list(width.cutoff=60), R.options=list(max.print=100))
+```
+
+## Data Wrangling, Exploration, Visualization
+
+#### Matthew Clark, Mrc4433
+
+\newpage
+
+### Introduction 
+
+This project uses 2 datasets. The first is my genomic polymorphism data from 23andMe and the second is a dataset on polymorphism variance from the National Center for Biotechnology Information (NCBI).
+
+#### Understanding this Analysis
+Before getting into this analysis, I wanted to note that it uses some scientific jargon, so for ease of understanding I've defined some key terms below. 
+
+- **Locus/Loci**- A position, point, or place (in this case, along a chromosome). 
+
+- **Polymorphism**- A genetic locus that has two clear different forms. In this case, one form is the reference sequence and one form is the alternative (phenotype-related) sequence.
+
+- **SNV**- Single Nucleotide Variant; a polymorphism in which a single nucleotide is changed. 
+
+- **Autosomal**- Referring to the non-sex non-mitochondrial chromosomes
+
+- **Allele**- A variant of a specific allele on one chromosome. With two chromosomes, there are two alleles (diallelic). 
+
+- **Homozygous**- When a diallelic locus has the same genetic sequence across two chromosomes. 
+
+- **Heterozygous**- When a diallelic locus has two different genetic sequences across two chromosomes. 
+
+#### Genomic 23andMe Data 
+
+In the genomic data, we have four variables: rsid, chromosome, position, and genotype.
+
+- **"Rsid"** is a Reference "SNP" cluster ID used to identify specific polymorphisms. In this data, a name beginning with an i refers to 23andMe-specific "internal" references.
+
+- **"Chromosome"** refers to the chromosome number that the specific polymorphism of interest is located. This can be the autosomal chromosomes (1-22), the sex chromosomes (X and Y) or the mitochondrial chromosome (MT). 
+
+- **"Position"** is the genetic location of the SNP on the chromosome. The smaller the number, the closer to the short-arm terminus of the chromosome. 
+
+- **"Genotype"** is the specific nucleotide sequence of a given polymorphism at a given locus. This can be named either after the specific nucleotide residue at that location or (if the polymorphisms is defined by insertions or deletions) the presence of an insertion or deletion at that SNP. With this, there are 7 possible annotations: 
+
+         A(Adenine), G(Guanosine), C(Cytosine), T(Thymine)
+  
+         D(Deletion), I(Insertion)
+  
+         -- (uncategorized)
+  
+- In addition to these annotations, polymorphisms on the autosomal chromosomes are *diallelic* (due to the diploid nature of these chromosomes) and thus have 2 "Genotype" annotations while the X, Y, and MT chromosomes only have one allele each (and thus one "Genotype").
+
+This data was downloaded as raw genomic DNA from 23andMe, converted into a .csv, and read into R. This dataset was interesting to me because it's a report of my own personal genome. In this dataset itself, there is little variable interaction to anticipate. Despite this, once combined with the dataset below that describes clinical variance, I anticipate having very few loci associated with diseased alleles (due to my not having major adverse health phenotypes). 
+
+#### NCBI Polymorphism Variant Data
+
+The NCBI data set, retrieved from https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/ (originally called variant_summary) was trimmed of superfluous ID variables before it was imported into R (this was done separately due to limits on the working memory of the R cloud). Each data point represents one polymorphism and its related data. The variables that remain post-trimming are as follows: 
+
+- **"Type"**
+
+- **"GeneSymbol"** 
+
+- **"ClinicalSignificance"**
+
+- **"RS...dbSNP"**
+
+- **"PhenotypeList"** 
+
+- **"Chromosome"** 
+
+- **"Start"**
+
+- **"Stop"**
+
+- **"PositionVCF"**
+
+- **"ReferenceAlleleVCF"**
+
+- **"AlternativeAlleleVCF"**
+
+More information on what each of these variables means can be found at https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/README under "2. variant_summary.txt". 
+
+This data is specifically interesting to me because it relates genetics to the clinical importance of each polymorphism. This allows me to do some "mesearch" and investigate how my genome compares to reference genomes and how that informs my own health. From other research, I expect larger polymorphisms to have a higher incidence of clinical significance.  
+
+
+
+```{R}
+
+library(tidyverse)
+library(ggpubr)
+#this is read in because I use the ggarrange function later
+library(kableExtra)
+
+My_Genome <- read_csv("/stor/home/mrc4433/project1/My Genome.csv")
+Variants <- read.delim("https://www.dropbox.com/s/yz7e8npx8jb0ub3/Variants.csv?dl=1", sep = " ")
+
+```
+
+### Tidying: Reshaping
+
+Note: The use of Pivot-longer / Pivot-Wider will be used later, but below is some pre-join wrangling.
+
+```{R}
+
+
+glimpse(My_Genome)
+glimpse(Variants)
+
+Genome <- My_Genome %>% slice(2:631993) %>% rename("rsid"="Column1", "chromosome"="Column2", "position"="Column3", "genotype"="Column4" )
+Genome$position <- as.numeric(Genome$position)
+Genome <- Genome %>% slice(2:631992)
+
+Genome <- Genome %>% mutate(rsid = str_remove(rsid, "rs"))
+#This code removes the "rs" from the Genotype data to prepare for joining with the Variant data that doesn't have this designation.
+
+Genome <- Genome %>% filter(str_detect(rsid, "i")==FALSE)
+#Here, we remove the rsid's with "i" because they refer to internal reference loci in 23andMe's system. Though these would undoubtedly be dropped in an innerjoin, I removed them in advance to prohibit any issues that may arise. 
+
+Variants <- Variants %>% rename("rsid"="RS...dbSNP.") %>% filter(rsid!=-1) %>% mutate(rsid = as.character(rsid))
+#In this code, I renamed the "RS...dbSNP" variable to "rsid" as in the Genomic data and removed all unknown rsids (denoted in this dataset by -1). Lastly, I made the rsid variable a character so it would join without hinderance. 
+
+
+glimpse(Genome)
+glimpse(Variants)
+
+
+```
+In this pre-join wrangling, I edited the Genomic data set to have proper column titles, coerced the Genome position into a numeric variable,  removed all rsids containing "i" as they represent "internal" 23andMe loci, removed "rs" from each rsid to prepare for joining, and removed any unknown genotypes (as they would not contribute to genome analysis). In addition, I renamed the rsid variable in the variants data set and made it a character to prepare the Variants data for joining. Lastly, I glimpsed at both sets to ensure my changes were as expected.
+    
+### Joining/Merging
+
+```{R}
+
+GenVar <- inner_join(Genome, Variants, by="rsid")
+
+glimpse(GenVar)
+
+a <- Genome %>% summarize(Total_Genome_Data_Points=n())
+b <- Genome %>% distinct() %>% summarize(Distinct_Genome_Data_Points=n())
+
+c <- Variants %>% summarize(Total_Variants_Data_Points=n())
+d <- Variants %>% distinct() %>% summarize(Distinct_Variants_Data_Points=n())
+
+e <- GenVar %>% summarize(Total_GenVar_Data_Points=n())
+f <- GenVar %>% distinct() %>% summarize(Distinct_GenVar_Data_Points=n())
+
+Counts <- c(a,b,c,d,e,f)
+Counts <- as.data.frame(Counts) %>% 
+    pivot_longer(cols= 1:6, names_to="Statistic", values_to="Values")
+print(Counts)
+
+count(Genome) - sum(Genome$rsid %in% GenVar$rsid)
+count(Variants) - sum(Variants$rsid %in% GenVar$rsid)
+
+#The above doublets of code give the total and unique data points of Genome (ab), Variants (cd), and their inner join (ef) datasets. They were then collected and pivoted longer to form a count summary data fram across the groups.
+```
+For the joining process, I chose an inner join because I specifically want to investigate the polymorphism loci that are reported by 23andMe AND have information regarding their clinical significance in the NCBI databases. With this aim, I used an inner join. In this case, this type of join specifically combines rows from the two data sets with matching rsids and removes all rows that do not have a counterpart in the other data set.
+
+The Genome data set has 631,991 reported loci that each represent a different rsid and the variants data has 1,264,261 data points and	1,258,102 distinct rsids (this is because one rsid can represent more than one genetic locus). The combined data set has 53,862 data points. 53,589 of these represent distinct rsids while the other 273 represent repeated rsids. 607,006 data points were removed from the Genome dataset (this makes sense because a large portion of Human polymorphisms do not yet have data in regards to their clinical significance). 1,210,399 data points were dropped from the variance data set (this large lack of rsid matches in the Genome dataset is likely reflective of a limited Raw Dataset from 23andMe and/or limited capacity of Genome-Wide testing of these loci.) Across both removed datasets, there does not appear to be a significant explanation for exclusion from the datasets. 
+
+###  Wrangling
+
+```{R}
+
+GenVar <- GenVar %>% separate(genotype, into=c("indAllele1", "indAllele2"), sep=1)
+#This separation becomes important for zygosity later
+
+GenVar <- GenVar %>% mutate(Size = Stop - PositionVCF + 1) 
+#This generates a new variable telling us the size of each polymorphism. 1 is added to each value because single nucleotide changes do not show differences between "Stop" and "PositionVCF" inn the dataset. 
+
+GenVar$ClinSigSimple <- GenVar$ClinSigSimple %>% str_replace_all("0", "No") %>% str_replace_all("-1","Unknown") %>% str_replace_all("1","Yes")
+#This code is for better visualization later
+
+#table(GenVar$ClinSigSimple)
+GenVar$Type <- GenVar$Type %>% str_replace("single nucleotide variant", "SNV")
+#This code, though not necessary, was entirely to make exploration easier on myself
+
+glimpse(GenVar)
+GenVar <- GenVar %>% select(!Chromosome)
+#Since this data is duplicated in the datasets, I arbitrarily removed one
+
+GenVar$PhenotypeList <- str_remove(GenVar$PhenotypeList, "not specified")
+GenVar$PhenotypeList <- str_remove(GenVar$PhenotypeList, "not provided")
+GenVar$PhenoCount <- ifelse((str_detect(GenVar$PhenotypeList, "conditions")==TRUE), yes= (PhenoCount = (str_extract(GenVar$PhenotypeList, "[0-9]+ conditions"))), no=(PhenoCount = str_count(GenVar$PhenotypeList, "[a-zA-Z0-9]+[^|]+"))) 
+GenVar$PhenoCount <- str_remove(GenVar$PhenoCount, "conditions") %>% as.numeric() 
+#This code tests if the Phenotype list specifies the number of conditions. If it does, it documents that number as "PhenoCount" and if it doesn't, it counts the number of Phenotypes in the list (as separated by "|"). 
+
+GenVarNonSNV <- GenVar %>% filter(Type!="SNV")
+
+GenVarSNV <- GenVar %>% filter(Type=="SNV") 
+GenVarSNV <- GenVarSNV %>% mutate(Zygosity = (indAllele1 == indAllele2)) %>% mutate(RefAlt = (indAllele1 == ReferenceAlleleVCF))
+GenVarSNV$Zygosity <- GenVarSNV$Zygosity %>% str_replace("TRUE", "Homozygous") %>% str_replace("FALSE", "Heterozygous")
+GenVarSNV$RefAlt <- GenVarSNV$RefAlt %>% str_replace("TRUE", "Reference") %>% str_replace("FALSE", "Alternate")
+GenVarSNV <- GenVarSNV %>% unite(ZygosityRefAlt, Zygosity, RefAlt, sep="-")
+GenVarSNV$ZygosityRefAlt <- GenVarSNV$ZygosityRefAlt %>% str_replace("Heterozygous-Reference", "Heterozygous") %>% str_replace("Heterozygous-Alternate", "Heterozygous")
+
+#The chunk of code above determines zygosity and comparison to the references for only SNVs. This is limited to SNVs because the 23andMe data did not report specific nucleotides for poly-nucleotide polymorphisms. Following this, I generated two variables. The first tests Zygosity (by comparing the two alleles) and the second compared the alleles to the reference. I then combined these variables, and removed redundancy (because Heterozygous-Reference and Heterozygous-Alternate refer to the same Genotype). 
+
+glimpse(GenVarSNV)
+
+```
+
+### Summary Statistics 
+Note: Summary statistics of "position" were not calculated because they do not provide any significant information for data analysis. 
+
+```{R}
+
+Sizesummary <- GenVar %>% 
+  summarise(
+    Size_mean=mean(Size),
+    Size_sd= sd(Size),
+    Size_var= var(Size),
+    Size_max= max(Size),
+    Size_min= min(Size),
+    Size_n_dist = n_distinct(Size),
+    )
+
+Sizesummary %>% pivot_longer(col=1:6, names_to="Statistic", values_to="value") %>% kable() %>% kable_styling(bootstrap_options = c("striped","condensed"), full_width = FALSE)
+
+```
+
+
+```{R}
+
+PCsummary <- GenVar %>% 
+  summarise(
+    PCmean=mean(PhenoCount),
+    PCsd= sd(PhenoCount),
+    PCvar= var(PhenoCount),
+    PCmax= max(PhenoCount),
+    PCmin= min(PhenoCount),
+    PCn_dist = n_distinct(PhenoCount),
+    ) 
+ PCsummary %>% pivot_longer(col=1:6, names_to="Statistic", values_to="value") %>% kable() %>% kable_styling(bootstrap_options = c("striped","condensed"), full_width = FALSE)
+```
+
+
+```{R}
+
+
+
+ GenVar %>% group_by(factor(chromosome, levels=c("1", "2", "3", "4", "5", "6","7", "8", "9", "10","11", "12", "13","14","15", "16", "17", "18", "19", "20", "21", "22", "X", "Y", "MT")), Type) %>% 
+    summarise(
+    mean=mean(PhenoCount),
+    sd= sd(PhenoCount),
+    var= var(PhenoCount),
+    max= max(PhenoCount),
+    min= min(PhenoCount),
+    n_dist = n_distinct(PhenoCount),
+          ) %>% rename("chromosome"="factor(...)") %>% arrange(desc(mean)) %>%
+  kable(caption = "Phenotypic Summary Statistics grouped by Chromosome and Polymorphism Type") %>%
+  kable_styling(bootstrap_options = c("striped","condensed"), full_width = FALSE) %>% 
+ scroll_box( height = "600px")
+
+  
+
+```
+
+
+### Visualizing
+Note: Because we did an inner join, all of the below visualizations are specifically limited to 23andMe data that is also has reported clinical significance data through the National Center for Biotechnological Information. 
+
+```{R}
+Fig1A <- GenVar %>% filter(ClinSigSimple!="Unknown") %>% ggplot(aes(position, Size , color=ClinSigSimple )) +  
+  geom_point(aes(alpha=.25)) +
+  facet_wrap(~factor(chromosome, levels=c("1", "2", "3", "4", "5", "6","7", "8", "9", "10","11", "12", "13","14","15", "16", "17", "18", "19", "20", "21", "22", "X", "Y", "MT"))) +  
+  scale_color_manual(values=c("Yes"= "green3", "No" = "violetred1" )) +  
+  theme_grey() + 
+  theme(axis.text.x=element_blank()) + 
+  scale_alpha(guide = 'none') +  
+  labs( title = "Clinical Significance of Polymorphisms", x= " Physical Position on Chromosome", y= "Size of Polymorphism", color="Clinical Significance") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+Fig1B <- GenVarNonSNV %>% filter(ClinSigSimple!="Unknown")  %>% ggplot(aes(position, Size , color=ClinSigSimple )) +
+  geom_point(aes(alpha=.25)) + 
+  facet_wrap(~factor(chromosome, levels=c("1", "2", "3", "4", "5", "6","7", "8", "9", "10","11", "12", "13","14","15", "16", "17", "18", "19", "20", "21", "22", "X", "Y", "MT"))) + 
+  scale_color_manual(values=c("Yes"= "green3", "No" = "violetred1" )) +
+  theme_grey() + 
+  theme(axis.text.x=element_blank()) +
+  scale_alpha(guide = 'none') +
+  labs( title = "Clinical Significance of Polynucleotide Polymorphisms", x= " Physical Position on Chromosome", y= "Size of Polymorphism", color="Clinical Significance") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+Fig1A 
+Fig1B
+
+```
+
+The first plot maps polymorphism size by their physical positions on the chromosomes. In addition, the graph is faceted by chromosome and clinical significance is dictated by the color. Any single dot tells us the size of the polymorphism, the chromosome it belongs to, and if it is clinically significant (note: the graph does not have indicated values for the position along the chromosomes because the value display cluttered the graphs and did not contribute to analysis of said graphs). Looking at this first graph, we clearly see a large quantity of non-clinically-significant data points near the bottom of the y-axes; this area is largely populated due to a disproportionately large count of single nucleotide variant polymorphisms. 
+To better visualize the data, I also made a graph that excluded all of these single nucleotide variants. With this, we can see that a large portion of the polymorphisms with sizes greater than 1 have some clinical significance. The physical location along the chromosome seems to have minimal (if any) bearing on the clinical significant of the reported polymorphisms. In addition, we see that the Y and MT chromosomes have no data in the polynucleotide graph. This informs us that all reported polymorphisms on both the Y chromosomes and MT chromosomes are single nucleotide variants. 
+
+Taken together, these plots give us these important take-aways
+
+- Polynucleotide variants account for a significant portion of Clinically significant variants in the data set
+- In general, larger sized polymorphisms are more likely to have clinical significance
+- Both the Y and Mitochondrial chromosomes do not have polynucleotide variants in the data set
+
+```{R}
+Fig2A <- GenVarNonSNV %>% filter(ClinSigSimple!="Unknown") %>% 
+  group_by(chromosome, Type, ClinSigSimple) %>% 
+  summarise(count=n()) %>% 
+  ggplot(aes(count, Type)) + 
+  geom_bar(stat="summary", fun=mean, position = "dodge", aes(fill=factor(ClinSigSimple))) + 
+  geom_errorbar(stat="summary", fun.data=mean_se, aes(fill=ClinSigSimple), position="dodge") +
+  theme_classic() + 
+  labs( title = "Clinical Significance of Non-SNV Polymorphisms by Type", y= " Type of Polymorphism ", x= "Genomic Count of Polymorphism", fill="Clinically Significant?") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_brewer()
+
+
+Fig2B <- GenVarSNV %>% filter(ClinSigSimple!="Unknown") %>% 
+  group_by(chromosome, Type, ClinSigSimple) %>% 
+  summarise(count=n()) %>% 
+  ggplot(aes(count, Type)) + 
+  geom_bar(stat="summary", fun=mean, position = "dodge", aes(fill=factor(ClinSigSimple))) + 
+  geom_errorbar(stat="summary", fun.data=mean_se, aes(fill=ClinSigSimple), position="dodge") + 
+  theme_classic() + 
+  labs( title = " ", y= " ", x= "Genomic Count of Polymorphism", fill="Clinically Significant?") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_brewer() + 
+  scale_x_continuous(breaks=seq(0,2000,50)) +
+  theme(axis.text.x = element_text(angle=45, hjust = 1)) 
+  
+  
+ 
+  
+ggarrange(Fig2A, Fig2B, nrow=2, common.legend = TRUE, legend = "bottom", align= "v") 
+
+#Note: I know we were told to limit our plot counts to 4, but I wasn't sure if you would count this as one or two. I interpret it as one thats been divided for clarity (meaning I would have 4 graphs) but I apologize if this goes over your specified max of 4 graphs. 
+```
+
+These plots investigate the clinical significance of different types of polymorphisms across all reported loci. Since Single Nucleotide Variants (SNVs) account for a majority of the data points, their plot was separated and applied a different x-scaling for clarity. 
+
+This data tells us a couple things: 
+- Genome wide, SNVs are more likely to be clinically insignificant than signficant while all other polymorphisms are more likely to be clinically significant than insignificant
+- The vast majority of nucleotide Deletions (and to a lesser extent duplications) are clinically significant
+- Deletions account for the second largest group of polymorphisms in the data (behind SNVs) and represent the largest group that is more likely to be clinically significant than insignificant 
+
+```{R}
+GenVarSNVDip <- GenVarSNV %>% filter(chromosome!="Y") %>% filter(chromosome!="MT") %>% filter(indAllele1!="--")
+
+GenVarSNVDip %>% 
+  ggplot(aes(position, PhenoCount)) + 
+  geom_point(size=.75, aes(col=ClinSigSimple)) + 
+  facet_wrap(~factor(ZygosityRefAlt, levels=c("Homozygous-Reference","Heterozygous", "Homozygous-Alternate"))) +
+  theme_pubclean() + 
+  labs( title = "Genomic Analysis of Polymorphism-Associated Phenotypic Count", y= " Number of Associated Phenotypes", x= "Physical Mapping of Polymorphism", col="Clinically Significant?") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text.x=element_blank()) +
+  theme(legend.position = "bottom") +
+  scale_color_manual(values=c("Yes"= "royalblue3", "No" = "violetred2", "Unknown" = "purple4")) +
+  scale_alpha(guide = 'none') +  
+  geom_line( aes(y=mean(PhenoCount))) +
+  scale_y_continuous(breaks=seq(0,30, 2))
+
+```
+
+Plot 3 specifically investigates my polymorphism loci as reported by 23andMe. The X axis maps to physical position (this variable is not as critical for interpretation, but assists in visualizing other information). The Y axis represents the number of phenotypes associated with the alternative allele of the polymorphic locus.The black lines on each graph represent the average number of associated phenotypes across all three conditions. The graph is also faceted by zygosity and comparison to the reference allele; in this case, Homozygous-Reference represent loci in my Genome that did not match the alternate allele and therefore the associated phenotypes were not to be expected. The middle section, "Heterozygous" represents when only one of two loci matches the alternate allele (meaning recessive phenotypes would not be exhibited), and the final section "Homozygous-Alternate" represent loci in which both alleles match the Alternate allele.
+
+From the graph, we can see that the vast majority of clinically significant polymorphisms (alongside those with the most phenotypes) are within the Homozygous-Reference section and therefore do not have deleterious effects towards my health. Similarly, the Homozygous-Alternate section has a relatively small quantity of clinically significant polymorphisms and those that are present tend to be around the average number of phenotypic counts. Importantly, the loci with the largest phenotypic counts tend to be Homozygous with respect to the reference (and therefore do not have the alternate, disease-associated). 
+
+
+
+
+
